@@ -1,0 +1,175 @@
+# Kubernetes deployment configuration for NewsGenie
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: newsgenie
+
+---
+# ConfigMap for application configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: newsgenie-config
+  namespace: newsgenie
+data:
+  ENVIRONMENT: "production"
+  LOG_LEVEL: "INFO"
+  STREAMLIT_SERVER_PORT: "8501"
+  STREAMLIT_SERVER_ADDRESS: "0.0.0.0"
+  STREAMLIT_BROWSER_GATHER_USAGE_STATS: "false"
+  STREAMLIT_SERVER_HEADLESS: "true"
+
+---
+# Secret for API keys (create this manually with your actual keys)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: newsgenie-secrets
+  namespace: newsgenie
+type: Opaque
+stringData:
+  OPENAI_API_KEY: "your-openai-api-key"
+  NEWS_API_KEY: "your-news-api-key"
+  TAVILY_API_KEY: "your-tavily-api-key"
+  SECRET_KEY: "your-secret-key"
+  POSTGRES_PASSWORD: "your-postgres-password"
+
+---
+# Deployment for NewsGenie application
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: newsgenie-app
+  namespace: newsgenie
+  labels:
+    app: newsgenie
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: newsgenie
+  template:
+    metadata:
+      labels:
+        app: newsgenie
+    spec:
+      containers:
+      - name: newsgenie
+        image: newsgenie:latest
+        ports:
+        - containerPort: 8501
+        envFrom:
+        - configMapRef:
+            name: newsgenie-config
+        - secretRef:
+            name: newsgenie-secrets
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /_stcore/health
+            port: 8501
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /_stcore/health
+            port: 8501
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        volumeMounts:
+        - name: data-volume
+          mountPath: /app/data
+      volumes:
+      - name: data-volume
+        persistentVolumeClaim:
+          claimName: newsgenie-pvc
+
+---
+# Service for NewsGenie
+apiVersion: v1
+kind: Service
+metadata:
+  name: newsgenie-service
+  namespace: newsgenie
+spec:
+  selector:
+    app: newsgenie
+  ports:
+  - port: 8501
+    targetPort: 8501
+  type: ClusterIP
+
+---
+# Persistent Volume Claim for data
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: newsgenie-pvc
+  namespace: newsgenie
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+
+---
+# Ingress for external access
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: newsgenie-ingress
+  namespace: newsgenie
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: newsgenie.yourdomain.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: newsgenie-service
+            port:
+              number: 8501
+
+---
+# HorizontalPodAutoscaler for automatic scaling
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: newsgenie-hpa
+  namespace: newsgenie
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: newsgenie-app
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
