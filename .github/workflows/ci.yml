@@ -1,0 +1,67 @@
+# Simple CI workflow for pull requests and feature branches
+name: Continuous Integration
+
+on:
+  pull_request:
+    branches: [ main, develop ]
+  push:
+    branches: [ feature/*, bugfix/*, hotfix/* ]
+
+env:
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  # Quick validation for PRs and feature branches
+  quick-check:
+    name: Quick CI Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install flake8 black isort pytest
+
+      - name: Code formatting check
+        run: |
+          black --check --diff .
+          isort --check-only --diff .
+
+      - name: Lint check
+        run: flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+
+      - name: Basic tests
+        run: |
+          python -m pytest --tb=short
+        env:
+          OPENAI_API_KEY: test_key
+          NEWSAPI_KEY: test_key
+          TAVILY_API_KEY: test_key
+
+  # Docker build test
+  docker-build-test:
+    name: Test Docker Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Test Docker build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
